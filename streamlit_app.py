@@ -312,12 +312,14 @@ with st.expander("📚 深度解析：模型破解过程与算法逻辑", expand
 # --- 8. Step-by-Step Implementation Guide ---
 st.divider()
 st.subheader("🛠️ 温度计指标计算步骤 (Step-by-Step Implementation)")
-st.markdown("你可以直接学习或复制以下逻辑到你的交易系统中。")
+st.markdown("您可以选择不同的代码变体，直接复制到您的交易系统中。")
+
+code_mode = st.radio("选择代码变体", ["1. 基础线性模型 (Standard Linear)", "2. 多项式修正 (Polynomial - Recommended)", "3. 极端值敏感 (Square/Sqrt - Experimental)"], horizontal=True)
 
 tabs = st.tabs(["Python (Pandas)", "Pine Script (TradingView)"])
 
-with tabs[0]:
-    st.code("""
+# Python Code Logic
+python_code_base = """
 import pandas as pd
 import numpy as np
 
@@ -344,56 +346,140 @@ def calculate_thermometer(df):
     std_bb = src.rolling(window=20).std()
     bb_percent = (src - (sma_bb - 2 * std_bb)) / (4 * std_bb) * 100
     bb_percent = bb_percent.clip(0, 100)
+"""
+
+python_code_linear = python_code_base + """
+    # 5. 最终加权合成 (线性)
+    thermometer = (rsi * 0.45) + (tsi_norm * 0.26) + (bb_percent * 0.29)
     
-    # [新增] 极端值非线性处理 (可选)
-    # 逻辑：<30 做平方压缩，>70 做开方增强
+    # 6. 3日SMA平滑
+    plot_line = thermometer.rolling(window=3).mean()
+    
+    return thermometer, plot_line
+"""
+
+python_code_poly = python_code_base + """
+    # 5. 最终加权合成 (线性基础)
+    thermometer = (rsi * 0.45) + (tsi_norm * 0.26) + (bb_percent * 0.29)
+    
+    # 6. 多项式非线性修正 (Polynomial Correction)
+    # y = ax^3 + bx^2 + cx + d
+    a, b, c, d = 1.105e-4, -1.655e-2, 1.692, -7.468
+    thermometer = a * thermometer**3 + b * thermometer**2 + c * thermometer + d
+    thermometer = thermometer.clip(0, 100)
+    
+    # 7. 3日SMA平滑
+    plot_line = thermometer.rolling(window=3).mean()
+    
+    return thermometer, plot_line
+"""
+
+python_code_sqrt = python_code_base + """
+    # [非线性变换] 极端值敏感处理
     def nonlinear_transform(val):
         if val < 30: return (val ** 2) / 100
         if val > 70: return np.sqrt(val) * 10
         return val
-        
+
+    # 应用变换
+    rsi = rsi.apply(nonlinear_transform)
+    tsi_norm = tsi_norm.apply(nonlinear_transform)
+    bb_percent = bb_percent.apply(nonlinear_transform)
+
     # 5. 最终加权合成
     thermometer = (rsi * 0.45) + (tsi_norm * 0.26) + (bb_percent * 0.29)
     
-    # 6. (可选) 非线性修正
-    if nonlinear_mode == "Polynomial":
-        a, b, c, d = 1.105e-4, -1.655e-2, 1.692, -7.468
-        thermometer = a * thermometer**3 + b * thermometer**2 + c * thermometer + d
-        thermometer = thermometer.clip(0, 100)
-    
-    # 7. (可选) 3日SMA平滑
+    # 6. 3日SMA平滑
     plot_line = thermometer.rolling(window=3).mean()
     
     return thermometer, plot_line
-    """, language="python")
+"""
 
-with tabs[1]:
-    st.code("""
+# Pine Script Logic
+pine_code_base = """
 //@version=5
-indicator("My Thermometer [Reverse Engineered]", overlay=false)
+indicator("My Thermometer", overlay=false)
 
-// ... 前续计算代码 ...
+// 1. 计算价格源
+src = (high + low + close * 2) / 4
 
-// 5. 最终加权合成
+// 2. 动量因子 (RSI)
+rsi_val = ta.rsi(src, 14)
+
+// 3. 趋势因子 (TSI - 相关系数)
+tsi_val = ta.correlation(src, bar_index, 14)
+tsi_norm = (tsi_val + 1) / 2 * 100
+
+// 4. 位置因子 (BB%B)
+[basis, upper, lower] = ta.bb(src, 20, 2)
+bb_percent = (src - lower) / (upper - lower) * 100
+"""
+
+pine_code_linear = pine_code_base + """
+// 5. 最终加权合成 (线性)
 thermometer = (rsi_val * 0.45) + (tsi_norm * 0.26) + (bb_percent * 0.29)
 
-// 6. 多项式修正 (可选，模拟 Polynomial Fit)
+// 6. 输出平滑线
+plot_line = ta.sma(thermometer, 3)
+
+plot(thermometer, "Thermometer Raw", color=color.green)
+plot(plot_line, "Thermometer Smooth", color=color.yellow)
+"""
+
+pine_code_poly = pine_code_base + """
+// 5. 最终加权合成 (线性基础)
+raw_score = (rsi_val * 0.45) + (tsi_norm * 0.26) + (bb_percent * 0.29)
+
+// 6. 多项式修正 (Polynomial Correction)
 // y = 0.00011x^3 - 0.0165x^2 + 1.69x - 7.46
 poly_fix(x) =>
     0.0001105 * math.pow(x, 3) - 0.01655 * math.pow(x, 2) + 1.692 * x - 7.468
-    
-// thermometer := poly_fix(thermometer)
+
+thermometer = poly_fix(raw_score)
 
 // 7. 输出平滑线
 plot_line = ta.sma(thermometer, 3)
 
-// 绘图
-plot(thermometer, "Thermometer Raw", color=color.green)
+plot(thermometer, "Thermometer Corrected", color=color.green)
 plot(plot_line, "Thermometer Smooth", color=color.yellow)
-hline(80, "Overbought", color=color.red, linestyle=hline.style_dashed)
-hline(20, "Oversold", color=color.green, linestyle=hline.style_dashed)
-hline(50, "Middle", color=color.gray, linestyle=hline.style_dotted)
-    """, language="pinescript")
+"""
+
+pine_code_sqrt = pine_code_base + """
+// [非线性变换] 极端值敏感处理
+nonlinear(val) =>
+    val < 30 ? (val * val / 100) : val > 70 ? (math.sqrt(val) * 10) : val
+
+// 应用变换
+rsi_nl = nonlinear(rsi_val)
+tsi_nl = nonlinear(tsi_norm)
+bb_nl = nonlinear(bb_percent)
+
+// 5. 最终加权合成
+thermometer = (rsi_nl * 0.45) + (tsi_nl * 0.26) + (bb_nl * 0.29)
+
+// 6. 输出平滑线
+plot_line = ta.sma(thermometer, 3)
+
+plot(thermometer, "Thermometer Sensitive", color=color.green)
+plot(plot_line, "Thermometer Smooth", color=color.yellow)
+"""
+
+with tabs[0]:
+    if "Linear" in code_mode:
+        st.code(python_code_linear, language="python")
+    elif "Polynomial" in code_mode:
+        st.code(python_code_poly, language="python")
+    else:
+        st.code(python_code_sqrt, language="python")
+
+with tabs[1]:
+    if "Linear" in code_mode:
+        st.code(pine_code_linear, language="pinescript")
+    elif "Polynomial" in code_mode:
+        st.code(pine_code_poly, language="pinescript")
+    else:
+        st.code(pine_code_sqrt, language="pinescript")
+
 
 # Data Table
 with st.expander("查看原始计算数据"):
